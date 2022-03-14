@@ -153,6 +153,28 @@ export class SmtpClient {
         throw new Error("No Content provided!");
       }
 
+      if(config.mimeContent.some(v=>v.mimeType.includes('--message') || v.transferEncoding?.includes('--message'))) {throw new Error("--message is not allowed to appear in mimetype or transferEncoding")}
+
+      if(config.attachments) {
+        for (let i = 0; i < config.attachments.length; i++) {
+          const att = config.attachments[i];
+          if(att.encoding === 'text') {
+            att.content = quotedPrintableEncode(att.content)
+          } else if (att.encoding === 'base64') {
+            config.attachments[i] = {
+              encoding: 'binary',
+              contentType: att.contentType,
+              content: base64Decode(att.content),
+              filename: att.filename  
+            }
+          }
+
+          const thr1 = att.filename.includes('--attachment') || att.contentType.includes('--attachment')
+
+          if(thr1) throw new Error('attachment contentype and filename are not allowed to contain --attachment.')
+        }
+      }
+
       await this.writeCmd("MAIL", "FROM:", from);
       this.assertCode(await this.readCmd(), CommandCode.OK);
 
@@ -213,21 +235,67 @@ export class SmtpClient {
         await this.writeCmd("Priority:", config.priority);
       }
 
+      // Calc attachment boundary
+      let attBoundary = 'attachment-0563167'
+
+      while (true) {
+        let nonBreak1 = config.mimeContent.some(v => v.content.includes(`--${attBoundary}`)) || (config.attachments && config.attachments.some(v => v.encoding === 'text' ? v.content.includes(`--${attBoundary}`) : false))
+        
+        if(!nonBreak1 && config.attachments) {
+          nonBreak1 = config.attachments.some(el => {
+            if(el.encoding === 'binary') {
+              const arr = new Uint8Array(el.content)
+              const text = encoder.encode(attBoundary)
+
+              for (let i = 0; i < arr.length - text.length + 1; i++) {
+                let found = true
+                for (let j = 0; j < text.length; j++) {
+                  if(arr[i+j] !== text[j]) {
+                    found = false
+                    i++
+                    j = 0
+                  }
+                }
+
+                if(found) {
+                  return true
+                }
+              }
+
+            }
+          })
+        }
+
+        if(!nonBreak1) break
+
+
+        attBoundary = 'attachment-' + Math.random().toString()
+      }
+
+
       await this.writeCmd("MIME-Version: 1.0");
 
       await this.writeCmd(
-        "Content-Type: multipart/mixed; boundary=attachment",
+        `Content-Type: multipart/mixed; boundary=${attBoundary}`,
         "\r\n",
       );
-      await this.writeCmd("--attachment");
+      await this.writeCmd(`--${attBoundary}`);
+
+      // Calc good msg boundary:
+      let msgBoundary = 'message-54343521687'
+
+      while(config.mimeContent.some(v => v.content.includes(`--${msgBoundary}`))) {
+        msgBoundary = 'message-' + Math.random().toString()
+      }
+
 
       await this.writeCmd(
-        "Content-Type: multipart/alternative; boundary=message",
+        `Content-Type: multipart/alternative; boundary=${msgBoundary}`,
         "\r\n",
       );
 
       for (let i = 0; i < config.mimeContent.length; i++) {
-        await this.writeCmd("--message");
+        await this.writeCmd(`--${msgBoundary}`);
         await this.writeCmd(
           "Content-Type: " + config.mimeContent[i].mimeType,
         );
@@ -245,14 +313,14 @@ export class SmtpClient {
         await this.writeCmd(config.mimeContent[i].content, "\r\n");
       }
 
-      await this.writeCmd("--message--\r\n");
+      await this.writeCmd(`--${msgBoundary}--\r\n`);
 
       if (config.attachments) {
         // Setup attachments
         for (let i = 0; i < config.attachments.length; i++) {
           const attachment = config.attachments[i];
 
-          await this.writeCmd("--attachment");
+          await this.writeCmd(`--${attBoundary}`);
           await this.writeCmd(
             "Content-Type:",
             attachment.contentType + ";",
@@ -281,15 +349,11 @@ export class SmtpClient {
             await this.writeCmd("Content-Transfer-Encoding: quoted-printable");
 
             await this.writeCmd(attachment.content, "\r\n");
-          } else if (attachment.encoding === "base64") {
-            await this.writeCmd("Content-Transfer-Encoding: binary");
-            await this.writeCmdBinary(base64Decode(attachment.content));
-            await this.writeCmd();
           }
         }
       }
 
-      await this.writeCmd("--attachment--\r\n");
+      await this.writeCmd(`--${attBoundary}--\r\n`);
 
       await this.writeCmd(".\r\n");
 
