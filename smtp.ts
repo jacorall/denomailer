@@ -277,7 +277,6 @@ export class SmtpClient {
 
           await this.writeCmd(
             "Content-Disposition: attachment; filename=" + attachment.filename,
-            "\r\n",
           );
 
           if (attachment.encoding === "binary") {
@@ -298,7 +297,7 @@ export class SmtpClient {
 
             await this.writeCmd(attachment.content, "\r\n");
           } else if (attachment.encoding === "base64") {
-            await this.writeCmd("Content-Transfer-Encoding: base64\n");
+            await this.writeCmd("Content-Transfer-Encoding: base64", "\r\n");
             await this.writeCmd(attachment.content);
             await this.writeCmd();
           }
@@ -434,8 +433,8 @@ export class SmtpClient {
       console.table(args.map(() => "Uint8Attay"));
     }
 
-    for (let i = 0; i < args.length; i++) {
-      await this.#writer.write(args[i]);
+    for (const arg of args) {
+      await this.#writer.write(arg);
     }
     await this.#writer.flush();
   }
