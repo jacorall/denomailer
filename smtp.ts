@@ -298,7 +298,7 @@ export class SmtpClient {
 
             await this.writeCmd(attachment.content, "\r\n");
           } else if (attachment.encoding === "base64") {
-            await this.writeCmd("Content-Transfer-Encoding: base64");
+            await this.writeCmd("Content-Transfer-Encoding: base64\n");
             await this.writeCmd(attachment.content);
             await this.writeCmd();
           }
